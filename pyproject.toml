@@ -1,0 +1,43 @@
+[project]
+name = "cfmv-browser-worker"
+version = "0.1.0"
+description = "Worker que consulta o registro publico de profissionais no CFMV pelo fluxo real de app.cfmv.gov.br/paginas/busca."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    # Fixada, e não só `>=`: a imagem Docker (mcr.microsoft.com/playwright/python)
+    # é publicada por versão exata, e o Chromium que ela traz precisa bater com
+    # o pacote instalado. `docker manifest inspect` confirmou a tag
+    # v1.62.0-noble antes de fixar aqui.
+    "playwright==1.62.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# B008: `Depends(...)` como default de parametro e o proprio idioma do FastAPI,
+# nao uma call por engano. E a excecao que a doc do bugbear recomenda.
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]

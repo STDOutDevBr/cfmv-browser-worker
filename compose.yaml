@@ -1,0 +1,9 @@
+# Sobe o worker local com a mesma imagem que a VPS vai rodar. Sem banco aqui
+# de propósito (seção 4 do plano): o worker não recebe DATABASE_URL nunca.
+services:
+  worker:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
