@@ -79,6 +79,20 @@ def test_http_429_e_blocked():
     assert resultado.status == "blocked"
 
 
+def test_json_de_sucesso_com_content_type_html_e_found():
+    # Visto ao vivo em 2026-09-15: a API real do CFMV devolve `text/html` no
+    # Content-Type mesmo quando o corpo e o JSON de sucesso. Confiar no
+    # cabecalho classificava isso como bloqueio por engano.
+    resultado = classify_response(
+        status=200,
+        content_type="text/html; charset=UTF-8",
+        body_text=_body([REGISTRO_VALIDO]),
+        uf="AM",
+        duration_ms=900,
+    )
+    assert resultado.status == "found"
+
+
 def test_html_no_lugar_do_json_e_blocked():
     resultado = classify_response(
         status=200,

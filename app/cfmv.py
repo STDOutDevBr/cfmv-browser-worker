@@ -77,14 +77,23 @@ def classify_response(
     if status in (403, 429):
         return _blocked(f"HTTP {status} da consulta publica.", duration_ms, raw_hash)
 
-    if "json" not in content_type.lower():
-        # HTML no lugar do JSON e o sinal mais comum de bloqueio (secao 6).
-        return _blocked("Resposta nao veio como JSON (HTML no lugar dele).", duration_ms, raw_hash)
-
     try:
         parsed: Any = json.loads(body_text)
     except json.JSONDecodeError:
-        return _blocked("Corpo dizia JSON e nao decodificou.", duration_ms, raw_hash)
+        # O Content-Type do CFMV nao e confiavel para decidir bloqueio: a API
+        # real devolve `text/html` mesmo quando o corpo e o JSON de sucesso
+        # (visto ao vivo em 2026-09-15, junto com o achado do `.preloader`).
+        # Por isso a decisao e sobre o corpo em si, e nao sobre o cabecalho: so
+        # vira "HTML no lugar do JSON" quando o corpo de fato comeca parecendo
+        # uma pagina.
+        stripped = body_text.strip().lower()
+        if stripped.startswith("<") or "<html" in stripped:
+            return _blocked("Resposta veio como HTML, nao JSON.", duration_ms, raw_hash)
+        return _blocked(
+            f"Corpo nao decodificou como JSON (content-type: {content_type or '(nenhum)'}).",
+            duration_ms,
+            raw_hash,
+        )
 
     if status >= 500:
         # Nao e um dos bloqueios documentados (secao 6), e tambem nao e sucesso:
