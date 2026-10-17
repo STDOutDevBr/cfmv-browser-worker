@@ -15,12 +15,19 @@ O servidor HTTP existe e passa nos proprios testes: `/health` e `/lookup/pf`, Be
 obrigatorio nos dois, navegador de longa duracao aberto na subida (sem cold start por
 consulta), concorrencia 1 com intervalo minimo, resfriamento apos bloqueio (sem retry
 automatico), reinicio do navegador por falhas seguidas ou por tempo de uso, e log
-estruturado que nunca carrega token, cookie ou o corpo bruto da resposta. 25 testes, todos
+estruturado que nunca carrega token, cookie ou o corpo bruto da resposta. 34 testes, todos
 sem precisar de navegador real (a logica de classificacao e pura, e as rotas HTTP usam um
 navegador falso via `dependency_overrides`).
 
+**Desde este registro (2026-09-15), foram adicionados:** a busca da foto
+(`incluirFoto`, best-effort, rota separada), o repasse cru de
+`pf_titulo_especialista` como `data.specializations` (sem request extra), e um
+fallback de `TEST_UF`/`TEST_INSCRICAO` no `.env` pros scripts manuais (secoes
+"Rodando o go/no-go" e "Rodando o teste manual da foto" abaixo). Ver "O
+contrato com a aplicacao principal" para o formato atual.
+
 **A re-checagem ao vivo do go/no-go, feita hoje, deu "nao vai".** Em 2026-09-14 o mesmo
-script tinha passado tres vezes seguidas (AM + 03156, HTTP 200). Hoje, rodando de novo:
+script tinha passado tres vezes seguidas (AM + 01234, HTTP 200). Hoje, rodando de novo:
 
 1. Achado e corrigido no caminho: os cliques nos radios (`force=True`) nao estavam
    marcando o campo de verdade, porque a pagina cobre o formulario com um `.preloader` ate
@@ -29,7 +36,7 @@ script tinha passado tres vezes seguidas (AM + 03156, HTTP 200). Hoje, rodando d
    ("Identico" + "Inscricao"), o que sozinho já explica por que os retornos vinham fora do
    esperado. Corrigido em `app/cfmv.py` e no `scripts/go_no_go.py`: esperar o `.preloader`
    sumir, e clicar sem `force`.
-2. **Com os parametros corretos, a consulta real (AM + 03156) devolveu `HTTP 500 "An
+2. **Com os parametros corretos, a consulta real (AM + 01234) devolveu `HTTP 500 "An
    Internal Error Has Occurred."` tres vezes seguidas**, a ultima gerada pelo proprio
    `app/cfmv.py` corrigido rodando dentro do worker. Nao e nenhum dos bloqueios que o
    plano documenta (403, 429, HTML no lugar do JSON, erro do reCAPTCHA): e um erro
@@ -64,7 +71,7 @@ curl -H "Authorization: Bearer $CFMV_WORKER_TOKEN" http://localhost:8000/health
 
 curl -X POST http://localhost:8000/lookup/pf \
   -H "Authorization: Bearer $CFMV_WORKER_TOKEN" -H "Content-Type: application/json" \
-  -d '{"uf":"AM","inscricao":"03156","requestId":"teste-manual"}'
+  -d '{"uf":"AM","inscricao":"01234","requestId":"teste-manual"}'
 ```
 
 ## Rodando com Docker
@@ -93,7 +100,9 @@ go/no-go abaixo, e ele é manual de propósito.
 ## Rodando o go/no-go
 
 ```bash
-python scripts/go_no_go.py --uf AM --inscricao 03156
+python scripts/go_no_go.py --uf AM --inscricao 01234
+# ou, sem --uf/--inscricao, usando o default de TEST_UF/TEST_INSCRICAO do .env:
+python scripts/go_no_go.py
 ```
 
 Abre um Chromium comum (sem stealth, sem user agent trocado, sem proxy), espera o token
@@ -107,16 +116,32 @@ JSON, erro do reCAPTCHA) é "não vai", e não é motivo para mascarar o navegad
 `HTTP 500` genérico também não é sucesso, mesmo sem estar na lista acima (ver "Estado
 atual" para o que isso significa hoje).
 
+## Rodando o teste manual da foto
+
+```bash
+python scripts/foto_lookup.py --cfmv-internal-id 100001
+# ou, sem o id em maos:
+python scripts/foto_lookup.py --uf AM --inscricao 01234
+# ou, sem nenhum dos dois, usando o default de TEST_UF/TEST_INSCRICAO do .env:
+python scripts/foto_lookup.py
+```
+
+A foto vem de uma rota separada da busca (`GET /pf/fotoConsultaPublica/{id}`, achada
+inspecionando o botão "Visualizar" do site), que não pede token de recaptcha. Com o
+`cfmvInternalId` em mãos, o script pula direto pra ela; sem ele, roda primeiro o mesmo
+fluxo do go/no-go para descobri-lo. Imprime a foto recebida (truncada) ou avisa quando o
+profissional não tem foto cadastrada (`"foto": null`, resposta normal da API, não erro).
+
 ## O contrato com a aplicação principal
 
 ```
 POST /lookup/pf            Authorization: Bearer <CFMV_WORKER_TOKEN>
-{ "uf": "AM", "inscricao": "03156", "requestId": "..." }
+{ "uf": "AM", "inscricao": "01234", "requestId": "...", "incluirFoto": false }
 
 200 { "status": "found",
-      "data": { "name": "...", "registration": "03156", "uf": "AM",
+      "data": { "name": "...", "registration": "01234", "uf": "AM",
                 "class": "VP", "active": true, "registrationDate": "2026-07-17",
-                "cfmvInternalId": 363609 },
+                "cfmvInternalId": 100001, "photo": null, "specializations": [] },
       "meta": { "fetchedAt": "...", "durationMs": 0, "rawHash": "sha256:..." } }
 200 { "status": "not_found" | "ambiguous", "meta": {...} }
 200 { "status": "blocked" | "error", "error": { "code": "...", "message": "..." }, "meta": {...} }
@@ -124,6 +149,21 @@ POST /lookup/pf            Authorization: Bearer <CFMV_WORKER_TOKEN>
 GET  /health                Authorization: Bearer <CFMV_WORKER_TOKEN>
 200 { "browser": "up", "lastLookupAt": "...", "queue": 0, "blockedCount": 0, "blockedUntil": null }
 ```
+
+`incluirFoto` é opcional (default `false`) e não muda a latência nem o número de
+requisições quando omitido. Quando `true` e o resultado é `found`, o worker faz um
+segundo request ao CFMV (`fotoConsultaPublica`, best-effort: uma falha nele nunca muda o
+`status` da consulta principal) e preenche `data.photo` com a foto em
+`data:image/jpeg;base64,...`, ou `null` quando o profissional não tem foto cadastrada no
+CFMV. **Campo novo no contrato:** ainda precisa ser espelhado em `cfmvProvider.ts`, no
+repositório `comunidade-pet-app`, antes de ir para produção.
+
+`data.specializations` vem direto do campo `pf_titulo_especialista` da própria consulta
+(sem request extra, ao contrário da foto), mas o formato de um item não-vazio **não foi
+confirmado contra o CFMV real** — em ~100 registros reais amostrados ao vivo, nenhum tinha
+título de especialista cadastrado. Por isso o worker repassa a lista crua como veio, em vez
+de tentar validar/tipar cada item. Se um dia aparecer um exemplo real preenchido, vale
+ajustar o tipo em `LookupData.specializations` pra refletir o formato de verdade.
 
 Detalhes de cada campo, e por que o worker nunca escreve em banco nenhum, estão na seção
 4.2 de `docs/plans/crmv-conferido-cfmv.md`, no repositório `comunidade-pet-app`.

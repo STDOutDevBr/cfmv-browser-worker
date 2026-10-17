@@ -7,16 +7,16 @@ from __future__ import annotations
 
 import json
 
-from app.cfmv import classify_response, is_valid_uf, normalize_inscricao
+from app.cfmv import classify_response, is_valid_uf, normalize_inscricao, parse_foto_response
 
 JSON_CT = "application/json; charset=utf-8"
 
 REGISTRO_VALIDO = {
-    "id_pf_inscricao": 363609,
-    "pf_inscricao": "03156",
+    "id_pf_inscricao": 100001,
+    "pf_inscricao": "01234",
     "pf_classe": "VP",
     "pf_uf": "AM",
-    "nome_preferencial": " NAIONE DE SOUZA BRANDAO",
+    "nome_preferencial": " MARIA EXEMPLO DA SILVA",
     "atuante": True,
     "dt_inscricao": "2026-07-17T00:00:00+00:00",
     "pf_titulo_especialista": [],
@@ -35,13 +35,52 @@ def test_um_registro_e_found_e_normaliza_o_nome():
     )
     assert resultado.status == "found"
     assert resultado.data is not None
-    assert resultado.data.name == "NAIONE DE SOUZA BRANDAO"
-    assert resultado.data.registration == "03156"
+    assert resultado.data.name == "MARIA EXEMPLO DA SILVA"
+    assert resultado.data.registration == "01234"
     assert resultado.data.class_ == "VP"
     assert resultado.data.active is True
     assert resultado.data.registrationDate == "2026-07-17"
-    assert resultado.data.cfmvInternalId == 363609
+    assert resultado.data.cfmvInternalId == 100001
+    assert resultado.data.specializations == []
     assert resultado.meta.rawHash and resultado.meta.rawHash.startswith("sha256:")
+
+
+def test_titulo_especialista_preenchido_passa_direto():
+    # Formato do item nao confirmado ao vivo (nenhum dos ~100 registros
+    # amostrados tinha titulo cadastrado), entao o campo e repassado cru.
+    registro = {**REGISTRO_VALIDO, "pf_titulo_especialista": [{"titulo": "Cirurgia"}]}
+    resultado = classify_response(
+        status=200, content_type=JSON_CT, body_text=_body([registro]), uf="AM", duration_ms=42
+    )
+    assert resultado.status == "found"
+    assert resultado.data is not None
+    assert resultado.data.specializations == [{"titulo": "Cirurgia"}]
+
+
+def test_titulo_especialista_ausente_ou_invalido_vira_lista_vazia():
+    registro_sem_campo = {k: v for k, v in REGISTRO_VALIDO.items() if k != "pf_titulo_especialista"}
+    resultado = classify_response(
+        status=200,
+        content_type=JSON_CT,
+        body_text=_body([registro_sem_campo]),
+        uf="AM",
+        duration_ms=42,
+    )
+    assert resultado.status == "found"
+    assert resultado.data is not None
+    assert resultado.data.specializations == []
+
+    registro_campo_invalido = {**REGISTRO_VALIDO, "pf_titulo_especialista": "nao e lista"}
+    resultado = classify_response(
+        status=200,
+        content_type=JSON_CT,
+        body_text=_body([registro_campo_invalido]),
+        uf="AM",
+        duration_ms=42,
+    )
+    assert resultado.status == "found"
+    assert resultado.data is not None
+    assert resultado.data.specializations == []
 
 
 def test_zero_registros_e_not_found():
@@ -175,9 +214,9 @@ def test_rawhash_nunca_guarda_o_corpo():
 
 
 def test_normalize_inscricao_completa_com_zeros():
-    assert normalize_inscricao("3156") == "03156"
-    assert normalize_inscricao("AM-03156") == "03156"
-    assert normalize_inscricao("03156") == "03156"
+    assert normalize_inscricao("1234") == "01234"
+    assert normalize_inscricao("AM-01234") == "01234"
+    assert normalize_inscricao("01234") == "01234"
 
 
 def test_is_valid_uf():
@@ -185,3 +224,22 @@ def test_is_valid_uf():
     assert is_valid_uf("am") is False  # espera maiuscula, quem chama normaliza antes
     assert is_valid_uf("AMZ") is False
     assert is_valid_uf("") is False
+
+
+def test_parse_foto_response_com_foto():
+    # Formato real visto ao vivo em app.cfmv.gov.br/pf/fotoConsultaPublica/{id}.
+    body = json.dumps({"data": {"foto": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}})
+    assert parse_foto_response(body) == "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+
+
+def test_parse_foto_response_sem_foto():
+    # Visto ao vivo: profissional sem foto cadastrada devolve "foto": null,
+    # nao um erro.
+    body = json.dumps({"data": {"foto": None}})
+    assert parse_foto_response(body) is None
+
+
+def test_parse_foto_response_corpo_inesperado_nao_estoura():
+    assert parse_foto_response("isto nao e json") is None
+    assert parse_foto_response(json.dumps({"ok": True})) is None
+    assert parse_foto_response(json.dumps({"data": {}})) is None

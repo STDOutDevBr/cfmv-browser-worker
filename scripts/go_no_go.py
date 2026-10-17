@@ -7,16 +7,21 @@ gera com grecaptcha.execute ao carregar, preenche o formulario real (UF + inscri
 visitante faria. Nao contorna nem mascara o reCAPTCHA de jeito nenhum: se a pagina bloquear,
 o resultado e "nao vai", e fica registrado assim.
 
-Uso: python scripts/go_no_go.py --uf AM --inscricao 03156 [--headless] [--timeout 20000]
+Uso: python scripts/go_no_go.py --uf AM --inscricao 01234 [--headless] [--timeout 20000]
+
+Sem --uf/--inscricao, cai no default de TEST_UF/TEST_INSCRICAO do .env (so pra
+agilizar teste manual local; o worker em si nunca le essas duas variaveis).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime
 
+from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
 SEARCH_URL = "https://app.cfmv.gov.br/paginas/busca"
@@ -26,12 +31,17 @@ CAMPO_INSCRICAO = "2"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--uf", required=True)
-    parser.add_argument("--inscricao", required=True)
+    load_dotenv()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--uf", default=os.environ.get("TEST_UF"))
+    parser.add_argument("--inscricao", default=os.environ.get("TEST_INSCRICAO"))
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--timeout", type=int, default=20000, help="milissegundos")
     args = parser.parse_args()
+
+    if not args.uf or not args.inscricao:
+        parser.error("passe --uf e --inscricao, ou defina TEST_UF/TEST_INSCRICAO no .env")
+
     args.uf = args.uf.upper()
     args.inscricao = "".join(c for c in args.inscricao if c.isdigit()).zfill(5)
     return args

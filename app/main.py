@@ -7,6 +7,8 @@ consulta: e o que evita pagar o cold start do Chromium a cada chamada (secao
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -16,6 +18,13 @@ from app.auth import require_bearer_token
 from app.browser import CfmvBrowser, cfmv_browser
 from app.logging import log_event
 from app.models import HealthResponse, LookupRequest, LookupResponse
+
+if sys.platform == "win32":
+    # O Playwright lanca o Chromium via subprocess assincrono, suportado so
+    # pelo ProactorEventLoop no Windows. Sem forcar isto aqui, antes do
+    # uvicorn criar o loop, o lifespan falha com NotImplementedError ao
+    # tentar abrir o navegador (SelectorEventLoop nao implementa subprocess).
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
 @asynccontextmanager
@@ -39,7 +48,7 @@ async def lookup_pf(
     body: LookupRequest, browser: CfmvBrowser = Depends(get_browser)
 ) -> LookupResponse:
     log_event("info", "consulta recebida", request_id=body.requestId, uf=body.uf.upper())
-    return await browser.lookup_pf(body.uf, body.inscricao, body.requestId)
+    return await browser.lookup_pf(body.uf, body.inscricao, body.requestId, body.incluirFoto)
 
 
 @app.get("/health", response_model=HealthResponse, dependencies=[Depends(require_bearer_token)])

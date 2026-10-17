@@ -28,10 +28,12 @@ TOKEN = "segredo-de-teste"
 class FakeBrowser:
     def __init__(self, resposta: LookupResponse) -> None:
         self._resposta = resposta
-        self.chamadas: list[tuple[str, str, str | None]] = []
+        self.chamadas: list[tuple[str, str, str | None, bool]] = []
 
-    async def lookup_pf(self, uf: str, inscricao: str, request_id: str | None) -> LookupResponse:
-        self.chamadas.append((uf, inscricao, request_id))
+    async def lookup_pf(
+        self, uf: str, inscricao: str, request_id: str | None, incluir_foto: bool = False
+    ) -> LookupResponse:
+        self.chamadas.append((uf, inscricao, request_id, incluir_foto))
         return self._resposta
 
     def health(self) -> HealthResponse:
@@ -43,13 +45,13 @@ class FakeBrowser:
 RESPOSTA_ENCONTRADA = LookupResponse(
     status="found",
     data=LookupData(
-        name="NAIONE DE SOUZA BRANDAO",
-        registration="03156",
+        name="MARIA EXEMPLO DA SILVA",
+        registration="01234",
         uf="AM",
         class_="VP",
         active=True,
         registrationDate="2026-07-17",
-        cfmvInternalId=363609,
+        cfmvInternalId=100001,
     ),
     meta=LookupMeta(fetchedAt=datetime.now(UTC).isoformat(), durationMs=120, rawHash="sha256:abc"),
 )
@@ -75,14 +77,14 @@ def client():
 
 
 def test_lookup_sem_authorization_e_401(client: TestClient):
-    r = client.post("/lookup/pf", json={"uf": "AM", "inscricao": "03156"})
+    r = client.post("/lookup/pf", json={"uf": "AM", "inscricao": "01234"})
     assert r.status_code == 401
 
 
 def test_lookup_com_token_errado_e_401(client: TestClient):
     r = client.post(
         "/lookup/pf",
-        json={"uf": "AM", "inscricao": "03156"},
+        json={"uf": "AM", "inscricao": "01234"},
         headers={"Authorization": "Bearer token-errado"},
     )
     assert r.status_code == 401
@@ -91,7 +93,7 @@ def test_lookup_com_token_errado_e_401(client: TestClient):
 def test_lookup_com_token_certo_devolve_found_com_class_por_extenso(client: TestClient):
     r = client.post(
         "/lookup/pf",
-        json={"uf": "AM", "inscricao": "03156", "requestId": "req-1"},
+        json={"uf": "AM", "inscricao": "01234", "requestId": "req-1"},
         headers={"Authorization": f"Bearer {TOKEN}"},
     )
     assert r.status_code == 200

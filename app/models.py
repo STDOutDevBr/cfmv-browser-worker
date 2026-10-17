@@ -6,7 +6,7 @@ Nuxt (cfmvProvider.ts) espera exatamente estas chaves.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +17,9 @@ class LookupRequest(BaseModel):
     uf: str
     inscricao: str
     requestId: str | None = None
+    # Opcional: a foto pede um segundo request ao CFMV (fotoConsultaPublica),
+    # entao so roda quando pedido, pra nao adicionar latencia por padrao.
+    incluirFoto: bool = False
 
 
 class LookupData(BaseModel):
@@ -33,6 +36,16 @@ class LookupData(BaseModel):
     active: bool
     registrationDate: str
     cfmvInternalId: int
+    # So preenchido quando o pedido veio com incluirFoto=true; None tambem
+    # cobre o caso normal do profissional nao ter foto cadastrada no CFMV.
+    photo: str | None = None
+    # Vem direto de `pf_titulo_especialista` da propria consulta (sem request
+    # extra, ao contrario da foto). Tipado como lista generica de proposito:
+    # em ~100 registros reais amostrados ao vivo, nenhum tinha titulo
+    # cadastrado, entao o formato de um item nao-vazio nao foi confirmado —
+    # e por isso repassado cru, em vez de assumir uma forma (ex.: {titulo:
+    # ..., data: ...}) que pode nao bater com a real.
+    specializations: list[Any] = Field(default_factory=list)
 
 
 class LookupErrorDetail(BaseModel):

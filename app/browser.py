@@ -14,7 +14,13 @@ from datetime import UTC, datetime, timedelta
 
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 
-from app.cfmv import classify_response, is_valid_uf, normalize_inscricao, perform_lookup_pf
+from app.cfmv import (
+    classify_response,
+    fetch_foto,
+    is_valid_uf,
+    normalize_inscricao,
+    perform_lookup_pf,
+)
 from app.config import settings
 from app.logging import log_event
 from app.models import HealthResponse, LookupErrorDetail, LookupMeta, LookupResponse
@@ -99,7 +105,13 @@ class CfmvBrowser:
             )
         return None
 
-    async def lookup_pf(self, uf: str, inscricao: str, request_id: str | None) -> LookupResponse:
+    async def lookup_pf(
+        self,
+        uf: str,
+        inscricao: str,
+        request_id: str | None,
+        incluir_foto: bool = False,
+    ) -> LookupResponse:
         uf_normalizado = uf.upper()
         inscricao_normalizada = normalize_inscricao(inscricao)
 
@@ -166,6 +178,20 @@ class CfmvBrowser:
                     uf=uf_normalizado,
                     duration_ms=duration_ms,
                 )
+
+                if incluir_foto and result.status == "found" and result.data is not None:
+                    try:
+                        result.data.photo = await fetch_foto(
+                            self._context, result.data.cfmvInternalId, settings.lookup_timeout_ms
+                        )
+                    except Exception as error:  # noqa: BLE001 - foto e best-effort
+                        log_event(
+                            "warn",
+                            "busca de foto falhou",
+                            request_id=request_id,
+                            error_code=type(error).__name__,
+                        )
+
                 self._last_lookup_at = datetime.now(UTC)
 
                 if result.status == "blocked":

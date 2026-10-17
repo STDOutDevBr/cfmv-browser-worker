@@ -14,12 +14,13 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from playwright.async_api import Page
+from playwright.async_api import BrowserContext, Page
 
 from app.models import LookupData, LookupErrorDetail, LookupMeta, LookupResponse
 
 SEARCH_URL = "https://app.cfmv.gov.br/paginas/busca"
 LOOKUP_PATH_PF = "/pf/consultaInscricao/"
+FOTO_PATH_PF = "/pf/fotoConsultaPublica/"
 METODO_IDENTICO = "1"
 CAMPO_INSCRICAO = "2"
 
@@ -120,6 +121,13 @@ def classify_response(
 
     registro = registros[0]
     try:
+        especializacoes = registro.get("pf_titulo_especialista")
+        if not isinstance(especializacoes, list):
+            # Campo informativo, nao essencial: um formato inesperado aqui
+            # nao deve derrubar o "found" inteiro (ao contrario dos campos
+            # abaixo, que sim viram UNEXPECTED_SHAPE se faltarem).
+            especializacoes = []
+
         data = LookupData(
             name=str(registro["nome_preferencial"]).strip(),
             registration=str(registro["pf_inscricao"]),
@@ -128,6 +136,7 @@ def classify_response(
             active=bool(registro["atuante"]),
             registrationDate=str(registro["dt_inscricao"]).split("T")[0],
             cfmvInternalId=int(registro["id_pf_inscricao"]),
+            specializations=especializacoes,
         )
     except (KeyError, TypeError, ValueError) as error:
         return _error("UNEXPECTED_SHAPE", f"Registro sem o campo esperado: {error}", duration_ms)
@@ -180,6 +189,35 @@ async def perform_lookup_pf(
     response = await response_info.value
     body_text = await response.text()
     return response.status, response.headers.get("content-type", ""), body_text
+
+
+def parse_foto_response(body_text: str) -> str | None:
+    """Extrai a foto (data URI base64) da resposta de `fotoConsultaPublica`.
+
+    Pura de proposito, como `classify_response`: quando o profissional nao
+    tem foto cadastrada, a propria API devolve `{"data": {"foto": null}}` (
+    visto ao vivo), entao `None` aqui cobre tanto esse caso quanto qualquer
+    corpo mal formado ou inesperado.
+    """
+    try:
+        parsed: Any = json.loads(body_text)
+        foto = parsed["data"]["foto"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+    return foto if isinstance(foto, str) else None
+
+
+async def fetch_foto(context: BrowserContext, cfmv_internal_id: int, timeout_ms: int) -> str | None:
+    """Busca a foto do profissional, best-effort (secao 4.2, campo opcional).
+
+    Rota separada da busca (`fotoConsultaPublica`, visto ao vivo): nao pede
+    token de recaptcha, entao da pra chamar direto via `context.request`,
+    reaproveitando o cookie de sessao do contexto, sem abrir pagina nova.
+    """
+    response = await context.request.get(
+        f"https://app.cfmv.gov.br{FOTO_PATH_PF}{cfmv_internal_id}", timeout=timeout_ms
+    )
+    return parse_foto_response(await response.text())
 
 
 _UF_PATTERN = re.compile(r"^[A-Z]{2}$")

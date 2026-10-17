@@ -11,7 +11,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # extra="ignore": o .env tambem serve de default pros scripts manuais
+    # (TEST_UF/TEST_INSCRICAO em go_no_go.py e foto_lookup.py), que nao sao
+    # campos deste Settings. Sem isto, uma chave que o worker nao conhece
+    # derruba o app inteiro na inicializacao (visto ao vivo ao adicionar
+    # TEST_UF: "Extra inputs are not permitted").
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Sem isto, nenhuma chamada é aceita (nem /health): "recusa tudo sem a
     # variavel", mesmo molde do CRON_SECRET do lado da aplicacao principal.
