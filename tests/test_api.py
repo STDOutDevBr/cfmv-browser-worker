@@ -111,6 +111,25 @@ def test_health_exige_token_tambem(client: TestClient):
     assert r.json()["browser"] == "up"
 
 
+def test_bearer_e_esquema_de_seguranca_na_spec_e_nao_parametro_de_header(client: TestClient):
+    # Como parametro de header, o Swagger do /docs ignora o Authorization e
+    # nunca manda o token. Como esquema de seguranca, ganha o "Authorize".
+    spec = client.get("/openapi.json").json()
+    assert spec["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
+    for path, method in (("/health", "get"), ("/lookup/pf", "post")):
+        operacao = spec["paths"][path][method]
+        assert operacao["security"] == [{"HTTPBearer": []}]
+        nomes = [p["name"].lower() for p in operacao.get("parameters", [])]
+        assert "authorization" not in nomes
+
+
+def test_esquema_bearer_aceita_minusculo_e_recusa_outro_esquema(client: TestClient):
+    r = client.get("/health", headers={"Authorization": f"bearer {TOKEN}"})
+    assert r.status_code == 200
+    r = client.get("/health", headers={"Authorization": f"Basic {TOKEN}"})
+    assert r.status_code == 401
+
+
 def test_sem_token_configurado_no_servidor_recusa_mesmo_com_bearer(client: TestClient):
     settings.cfmv_worker_token = ""
     r = client.get("/health", headers={"Authorization": f"Bearer {TOKEN}"})
