@@ -9,51 +9,69 @@ Stack: Python 3.12+, FastAPI, Playwright para Python (fixado em `1.62.0`, mesma 
 imagem Docker). Sem banco aqui: um escritor so (a aplicacao principal), e este worker nunca
 recebe `DATABASE_URL`.
 
-## Estado atual (2026-09-15)
+## Estado atual (2026-10-18)
 
-O servidor HTTP existe e passa nos proprios testes: `/health` e `/lookup/pf`, Bearer
-obrigatorio nos dois, navegador de longa duracao aberto na subida (sem cold start por
-consulta), concorrencia 1 com intervalo minimo, resfriamento apos bloqueio (sem retry
-automatico), reinicio do navegador por falhas seguidas ou por tempo de uso, e log
-estruturado que nunca carrega token, cookie ou o corpo bruto da resposta. 34 testes, todos
-sem precisar de navegador real (a logica de classificacao e pura, e as rotas HTTP usam um
-navegador falso via `dependency_overrides`).
+**Em produção em `https://cfmv.comunidade.pet`, e o go/no-go passou saindo da VPS.** Três
+consultas reais pelo worker de produção, às 20:11, 20:36 e 20:41 UTC, devolveram HTTP 200,
+`found` e um registro, com foto. Isso cumpre o critério de "vai" (seção "Rodando o
+go/no-go"), com uma diferença: as três passaram pelo próprio worker (`app/cfmv.py`), não
+pelo `scripts/go_no_go.py`. O fluxo na página do CFMV é o mesmo. Antes, no mesmo dia, uma
+consulta de IP residencial tinha dado o mesmo resultado, com dados e foto idênticos.
 
-**Desde este registro (2026-09-15), foram adicionados:** a busca da foto
-(`incluirFoto`, best-effort, rota separada), o repasse cru de
-`pf_titulo_especialista` como `data.specializations` (sem request extra), e um
-fallback de `TEST_UF`/`TEST_INSCRICAO` no `.env` pros scripts manuais (secoes
-"Rodando o go/no-go" e "Rodando o teste manual da foto" abaixo). Ver "O
-contrato com a aplicacao principal" para o formato atual.
+O risco que mais pesava não se confirmou: o reCAPTCHA v3 costuma pontuar mal IP de
+datacenter, e as consultas da VPS saíram até mais rápidas (3,6 a 4,9 s, contra 13 s do
+IP residencial).
 
-**A re-checagem ao vivo do go/no-go, feita hoje, deu "nao vai".** Em 2026-09-14 o mesmo
-script tinha passado tres vezes seguidas (AM + 01234, HTTP 200). Hoje, rodando de novo:
+O worker em si: `/health` e `/lookup/pf`, com Bearer obrigatório nos dois. O navegador de
+longa duração abre na subida (sem cold start por consulta). Concorrência 1 com intervalo
+mínimo, resfriamento após bloqueio (sem retry automático), e reinício do navegador por
+falhas seguidas ou por tempo de uso. O log é estruturado e nunca carrega token, cookie ou
+o corpo bruto da resposta. Inclui a busca da foto (`incluirFoto`, best-effort, rota
+separada) e o repasse cru de `pf_titulo_especialista` como `data.specializations`.
 
-1. Achado e corrigido no caminho: os cliques nos radios (`force=True`) nao estavam
-   marcando o campo de verdade, porque a pagina cobre o formulario com um `.preloader` ate
-   terminar de montar, e clique forcado nao espera isso. Sem o clique valendo, a consulta
-   saia com os parametros default ("Iniciado com" + "Tudo") em vez dos escolhidos
-   ("Identico" + "Inscricao"), o que sozinho já explica por que os retornos vinham fora do
-   esperado. Corrigido em `app/cfmv.py` e no `scripts/go_no_go.py`: esperar o `.preloader`
-   sumir, e clicar sem `force`.
-2. **Com os parametros corretos, a consulta real (AM + 01234) devolveu `HTTP 500 "An
-   Internal Error Has Occurred."` tres vezes seguidas**, a ultima gerada pelo proprio
-   `app/cfmv.py` corrigido rodando dentro do worker. Nao e nenhum dos bloqueios que o
-   plano documenta (403, 429, HTML no lugar do JSON, erro do reCAPTCHA): e um erro
-   generico do backend do CFMV, e por isso `classify_response` trata como `error` com o
-   codigo `CFMV_SERVER_ERROR`, e nao como `blocked` (classificar sem certeza dispararia o
-   resfriamento de bloqueio por uma suposicao).
+São 36 testes, todos sem navegador real: a lógica de classificação é pura, e as rotas HTTP
+usam um navegador falso via `dependency_overrides`.
 
-**O que isso significa, sem concluir por conta propria:** pode ser problema pontual do
-backend do CFMV hoje, ou pode ser o mesmo tipo de rejeicao por pontuacao baixa do reCAPTCHA
-v3 que o relatorio original ja avisava, so que se manifestando como erro generico em vez de
-bloqueio limpo. **Nao rodei mais tentativas depois da terceira**, para nao virar volume
-contra um servidor que ja respondeu nao tres vezes. A decisao de proxima tentativa (outro
-dia, outro horario, ou perguntar ao CFMV pelo canal oficial) e de quem acompanha o `T-14`.
+**Pendências conhecidas:**
 
-Ate aqui, o unico teste bem-sucedido de ponta a ponta contra o CFMV real continua sendo o
-de 2026-09-14 (tres consultas, HTTP 200). O worker em si (servidor, contrato, testes) esta
-pronto; o que falta e o CFMV voltar a responder.
+- **`/docs`, `/redoc` e `/openapi.json` estão públicos em produção.** São os defaults do
+  FastAPI, nunca desligados no código, e respondem 200 sem token. Não dá para consultar
+  nada por eles, porque as rotas de verdade continuam exigindo Bearer. Mas isso contradiz o
+  "sem rota pública" da seção 4.3 do plano e expõe o formato da API. Caminho sugerido:
+  desligar por padrão e ligar só em dev, por variável.
+- **`incluirFoto` ainda precisa ser espelhado em `cfmvProvider.ts`** (ver "O contrato com
+  a aplicação principal").
+- **O teste de ponta a ponta pelo comunidade.pet (Vercel → worker) não foi feito até este
+  registro.** Falta configurar na Vercel o `CFMV_WORKER_TOKEN` de produção e a URL do
+  worker (ver "Produção").
+
+### Histórico: o HTTP 500 de 2026-09-15, e os dois bugs achados no caminho
+
+Em 2026-09-14 o `go_no_go.py` tinha passado três vezes seguidas. A re-checagem de
+2026-09-15 encontrou e corrigiu um bug: os cliques nos radios (`force=True`) não marcavam
+o campo, porque a página cobre o formulário com um `.preloader` até terminar de montar, e
+o clique forçado não espera isso. A consulta saía com os parâmetros default ("Iniciado com"
++ "Tudo") em vez de "Idêntico" + "Inscrição". A correção, em `app/cfmv.py` e no
+`go_no_go.py`, foi esperar o `.preloader` sumir e clicar sem `force`.
+
+Com os parâmetros corretos, o CFMV devolveu `HTTP 500 "An Internal Error Has Occurred."`
+três vezes seguidas, e as tentativas pararam aí para não virar volume. Não é nenhum dos
+bloqueios que o plano documenta (403, 429, HTML no lugar do JSON, erro do reCAPTCHA). Por
+isso, `classify_response` trata esse caso como `error`, com o código `CFMV_SERVER_ERROR`, e
+não como `blocked`: classificar sem certeza dispararia o resfriamento por uma suposição.
+
+Cerca de 40 minutos depois, o backend do CFMV tinha voltado, e o `go_no_go.py` recebeu
+HTTP 200 de novo. Foi aí que apareceu o segundo bug: a API do CFMV serve o JSON de sucesso
+com `Content-Type: text/html`, e `classify_response` recusava como bloqueio qualquer
+resposta sem "json" no Content-Type. A correção (commit `876be09`) passou a decidir pelo
+corpo: só é "HTML no lugar do JSON" quando o corpo parece uma página. Com isso veio, no
+mesmo dia, o primeiro sucesso pelo próprio contrato do worker.
+
+A causa do 500 nunca foi confirmada. Pode ter sido um problema pontual do backend do
+CFMV, ou uma rejeição do reCAPTCHA disfarçada de erro genérico. Como passou sozinho em
+cerca de 40 minutos, a primeira hipótese é a mais provável, mas isso não prova nada.
+**Se o 500 voltar em sequência, não insistir.** A decisão de quando tentar de novo, ou de
+perguntar ao CFMV pelo canal oficial, é de quem acompanha o `T-14`.
 
 ## Rodando o worker localmente
 
@@ -83,6 +101,49 @@ docker compose up --build
 A imagem (`mcr.microsoft.com/playwright/python:v1.62.0-noble`) já traz o Chromium
 compatível com a versão fixada em `pyproject.toml`; não há `playwright install` no
 `Dockerfile`.
+
+## Produção
+
+Roda em `https://cfmv.comunidade.pet`, na VPS da Stdout (Hostinger, São Paulo,
+`srv746288.hstgr.cloud`), em Docker atrás do Traefik que já serve os outros serviços de
+lá. A configuração da stack e o registro do deploy ficam no repositório da infra
+(`STDOutDevBr/infrastdout_1`): a stack em `/opt/stacks/cfmv-worker/` e o registro em
+`docs/onde-paramos.md`. Aqui fica só o que importa para quem mexe no worker:
+
+- **Código e imagem:** o código roda do clone em `~/projetos/cfmv-browser-worker`. A
+  imagem é marcada com o commit (`cfmv-browser-worker:<sha>`), nunca com `latest`.
+- **Acesso:** sem porta publicada, só o Traefik alcança o contêiner. O
+  `CFMV_WORKER_TOKEN` de produção está no `.env` da stack (modo 600), e é o mesmo que a
+  Vercel precisa mandar.
+- **DNS:** registro A `cfmv` em `comunidade.pet` no Cloudflare, em modo **DNS only**. O
+  certificado é validado por TLS-ALPN, que não passa pelo proxy do Cloudflare.
+
+Para atualizar depois de um push na `main` (na VPS, como `tiago`):
+
+```bash
+cd ~/projetos/cfmv-browser-worker && git pull
+# trocar a tag em /opt/stacks/cfmv-worker/docker-compose.yml pelo novo `git rev-parse --short HEAD`
+cd /opt/stacks/cfmv-worker && docker compose up -d --build
+```
+
+Para testar em produção sem o token aparecer na tela:
+
+```bash
+export CFMV_TOKEN=$(ssh tiago@srv746288.hstgr.cloud 'sed -n "s/^CFMV_WORKER_TOKEN=//p" /opt/stacks/cfmv-worker/.env')
+
+curl -s -H "Authorization: Bearer $CFMV_TOKEN" https://cfmv.comunidade.pet/health
+
+curl -s -X POST https://cfmv.comunidade.pet/lookup/pf \
+  -H "Authorization: Bearer $CFMV_TOKEN" -H "Content-Type: application/json" \
+  -d '{"uf":"AM","inscricao":"01234","requestId":"teste-prod"}'
+```
+
+Pelo navegador, também dá para testar em `https://cfmv.comunidade.pet/docs`: clique em
+**Authorize** e cole só o token, sem o prefixo "Bearer", que o Swagger acrescenta sozinho.
+
+Cada `/lookup/pf` vai ao CFMV de verdade: nada de rodar em loop. O worker devolve HTTP 200
+para todos os resultados, então quem chama decide pelo campo `status`, não pelo código
+HTTP. A única exceção é o 401, de token ausente ou errado.
 
 ## Testes
 
