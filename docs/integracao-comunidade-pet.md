@@ -46,7 +46,7 @@ e pede que o resultado entre no journal com a saída. Este é o resultado:
 | Caddy como proxy                                              | **Traefik**, que já servia os outros serviços da VPS                                                                                              |
 | VPS nova, custo não cotado (seções 9 e 11)                    | **A VPS da Stdout que já existia** (Hostinger KVM 2, São Paulo). Sem custo novo                                                                   |
 | Contrato da seção 4.2                                         | Igual, **mais** `incluirFoto` / `data.photo`, `data.specializations` e, no `/health`, `blockedCount` e `blockedUntil` (seção 3 abaixo)             |
-| Sem endpoint público (seção 4.3)                              | As duas rotas exigem Bearer, mas **`/docs`, `/redoc` e `/openapi.json` são públicos** (seção 8 abaixo)                                            |
+| Sem endpoint público (seção 4.3)                              | As duas rotas exigem Bearer, e **`/docs`, `/redoc` e `/openapi.json` ficam atrás de um login do Traefik** (seção 8 abaixo)                          |
 
 O resto segue o plano: um escritor só (o worker não tem `DATABASE_URL`), concorrência 1, `blocked`
 como estado e não como erro a vencer, nenhum mascaramento de navegador, e log sem token, cookie ou
@@ -236,8 +236,12 @@ log, e nunca para a resposta ao usuário.
 
 ## 8. Como testar o worker de produção à mão
 
-**Pelo navegador:** abra `https://cfmv.comunidade.pet/docs`, clique em **Authorize** e cole **só o
-token**, sem "Bearer" (o Swagger acrescenta sozinho). Depois use o "Try it out" de cada rota.
+**Pelo navegador:**
+
+1. Abra `https://cfmv.comunidade.pet/docs`.
+2. A página pede um login: o basic auth da VPS, o mesmo do painel do Traefik. Peça ao Tiago.
+3. Clique em **Authorize** e cole **só o token**, sem "Bearer" (o Swagger acrescenta sozinho).
+4. Use o "Try it out" de cada rota.
 
 **Pelo terminal:**
 
@@ -256,9 +260,10 @@ A chave do exemplo é a da prova de conceito do relatório (plano, seção 2.2).
 **Cada `/lookup/pf` vai ao CFMV de verdade.** Nada de loop, teste de carga ou varredura: o plano
 (seção 9) limita o uso a uma consulta por aprovação mais o "verificar agora" de um admin.
 
-**Sobre o `/docs` público:** hoje qualquer pessoa vê o formato da API ali, mas sem o token não
-consegue chamar nada. Isso contradiz em parte a seção 4.3 do plano, e a decisão de desligar o
-`/docs` em produção (e usá-lo só com o worker local) está em aberto do lado do worker.
+**Por que o `/docs` tem login:** sem ele, qualquer pessoa que achasse o subdomínio (os
+certificados são públicos) lia ali o que o worker faz, com o nome do comunidade.pet. Isso é
+justamente o que a seção 4.3 do plano quer evitar. O login fica no Traefik, e não no código: as
+rotas da API não mudam e só exigem o Bearer.
 
 ## 9. Operação: onde mora e como mexer
 
@@ -312,7 +317,5 @@ consegue chamar nada. Isso contradiz em parte a seção 4.3 do plano, e a decis�
 
 **Do lado do worker:**
 
-- **Decidir sobre o `/docs` público em produção.** O caminho sugerido é desligá-lo por padrão e
-  ligá-lo por variável em dev.
 - **Mudanças de contrato** acontecem no repositório do worker e precisam ser espelhadas aqui. A
   fonte é o README de lá, na seção "O contrato com a aplicação principal".

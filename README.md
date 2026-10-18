@@ -34,11 +34,6 @@ usam um navegador falso via `dependency_overrides`.
 
 **Pendências conhecidas:**
 
-- **`/docs`, `/redoc` e `/openapi.json` estão públicos em produção.** São os defaults do
-  FastAPI, nunca desligados no código, e respondem 200 sem token. Não dá para consultar
-  nada por eles, porque as rotas de verdade continuam exigindo Bearer. Mas isso contradiz o
-  "sem rota pública" da seção 4.3 do plano e expõe o formato da API. Caminho sugerido:
-  desligar por padrão e ligar só em dev, por variável.
 - **`incluirFoto` ainda precisa ser espelhado em `cfmvProvider.ts`** (ver "O contrato com
   a aplicação principal").
 - **O teste de ponta a ponta pelo comunidade.pet (Vercel → worker) não foi feito até este
@@ -138,8 +133,16 @@ curl -s -X POST https://cfmv.comunidade.pet/lookup/pf \
   -d '{"uf":"AM","inscricao":"01234","requestId":"teste-prod"}'
 ```
 
-Pelo navegador, também dá para testar em `https://cfmv.comunidade.pet/docs`: clique em
-**Authorize** e cole só o token, sem o prefixo "Bearer", que o Swagger acrescenta sozinho.
+Pelo navegador, também dá para testar em `https://cfmv.comunidade.pet/docs`. A página
+pede primeiro um login: o mesmo basic auth do painel do Traefik e do Homepage da VPS. Depois,
+clique em **Authorize** e cole só o token, sem o prefixo "Bearer", que o Swagger acrescenta
+sozinho.
+
+O código do worker serve `/docs`, `/redoc` e `/openapi.json` sem autenticação (os
+defaults do FastAPI). Quem fecha essas três páginas em produção é o Traefik, com um
+segundo roteador (`cfmv-docs`) no compose da stack. As rotas da API só exigem o Bearer.
+Fechar as páginas evita que o worker se descreva para quem chega pelo certificado público,
+como pede o "sem endpoint público" da seção 4.3 do plano.
 
 Cada `/lookup/pf` vai ao CFMV de verdade: nada de rodar em loop. O worker devolve HTTP 200
 para todos os resultados, então quem chama decide pelo campo `status`, não pelo código
